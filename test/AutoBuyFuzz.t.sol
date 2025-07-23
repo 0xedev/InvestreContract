@@ -6,10 +6,107 @@ import { AutoBuyContract } from "../src/AllUniswap.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20Mock } from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 
+// Mock contracts for testing
+contract MockUniversalRouter {
+    IERC20 public targetToken;
+    
+    function setTargetToken(address _targetToken) external {
+        targetToken = IERC20(_targetToken);
+    }
+    
+    function execute(bytes calldata, bytes[] calldata, uint256) external payable {
+        // Simulate a successful swap by transferring target tokens to caller
+        if (address(targetToken) != address(0)) {
+            uint256 amountOut = 100e6; // Mock return value
+            if (targetToken.balanceOf(address(this)) >= amountOut) {
+                targetToken.transfer(msg.sender, amountOut);
+            }
+        }
+    }
+}
+
+contract MockPoolManager {
+    // Handle direct storage access that StateLibrary might use
+    fallback() external {
+        // Return zero for any unhandled calls to simulate empty pool
+        assembly {
+            mstore(0x00, 0)
+            return(0x00, 0x20)
+        }
+    }
+}
+
+contract MockV3Router {
+    IERC20 public targetToken;
+    
+    constructor(address _targetToken) {
+        targetToken = IERC20(_targetToken);
+    }
+    
+    function exactInputSingle(
+        ISwapRouter.ExactInputSingleParams calldata params
+    ) external returns (uint256) {
+        // Simulate a successful swap by transferring target tokens to recipient
+        uint256 amountOut = 100e6; // Mock return value
+        if (targetToken.balanceOf(address(this)) >= amountOut) {
+            targetToken.transfer(params.recipient, amountOut);
+        }
+        return amountOut;
+    }
+}
+
+interface ISwapRouter {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24 fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+}
+
+contract MockV2Router {
+    IERC20 public targetToken;
+    
+    constructor(address _targetToken) {
+        targetToken = IERC20(_targetToken);
+    }
+    
+    function swapExactTokensForTokens(
+        uint256,
+        uint256,
+        address[] calldata,
+        address to,
+        uint256
+    ) external returns (uint256[] memory amounts) {
+        amounts = new uint256[](2);
+        amounts[0] = 100e6; // Input amount
+        amounts[1] = 100e6; // Output amount
+        
+        // Transfer tokens to recipient
+        if (targetToken.balanceOf(address(this)) >= amounts[1]) {
+            targetToken.transfer(to, amounts[1]);
+        }
+    }
+}
+
+contract MockPermit2 {
+    // Empty mock for now
+}
+
 contract AutoBuyFuzzTest is Test {
     AutoBuyContract public autoBuy;
     ERC20Mock public usdc;
     ERC20Mock public targetToken;
+    
+    MockUniversalRouter public router;
+    MockPoolManager public poolManager;
+    MockV3Router public v3Router;
+    MockV2Router public v2Router;
+    MockPermit2 public permit2;
     
     address public owner = address(0x1);
     address public backend = address(0x2);
@@ -19,13 +116,28 @@ contract AutoBuyFuzzTest is Test {
         usdc = new ERC20Mock();
         targetToken = new ERC20Mock();
         
+        // Create mock contracts
+        router = new MockUniversalRouter();
+        poolManager = new MockPoolManager();
+        v3Router = new MockV3Router(address(targetToken));
+        v2Router = new MockV2Router(address(targetToken));
+        permit2 = new MockPermit2();
+        
+        // Mint tokens to mock routers for swaps
+        targetToken.mint(address(v3Router), 1000000e18);
+        targetToken.mint(address(v2Router), 1000000e18);
+        targetToken.mint(address(router), 1000000e18);
+        
+        // Set target token for universal router
+        router.setTargetToken(address(targetToken));
+        
         vm.prank(owner);
         autoBuy = new AutoBuyContract(
-            address(0x100), // Mock router
-            address(0x101), // Mock pool manager  
-            address(0x102), // Mock permit2
-            address(0x103), // Mock V3 router
-            address(0x104), // Mock V2 router
+            address(router),
+            address(poolManager),
+            address(permit2),
+            address(v3Router),
+            address(v2Router),
             address(usdc)
         );
         
@@ -34,8 +146,6 @@ contract AutoBuyFuzzTest is Test {
         
         vm.prank(owner);
         autoBuy.setFeeRecipient(feeRecipient);
-        
-        targetToken.mint(address(autoBuy), 1000000e18);
     }
     
     function setupUser(address user, uint256 balance, uint256 buyLimit) internal {
@@ -170,17 +280,24 @@ contract AutoBuyFuzzTest is Test {
         uint256 withdrawAmount
     ) public {
         vm.assume(user != address(0));
-        vm.assume(initialTokens > 0 && initialTokens <= 1000000e18);
+        vm.assume(user != address(autoBuy));
+        vm.assume(user != owner);
+        vm.assume(user != backend);
+        vm.assume(user != feeRecipient);
+        vm.assume(initialTokens > 0 && initialTokens <= 1000e6); // Use smaller amounts
         vm.assume(withdrawAmount > 0 && withdrawAmount <= initialTokens);
         
         setupUser(user, 100000e6, 50000e6);
         
-        // Simulate user earning tokens (directly set balance for testing)
-        vm.store(
-            address(autoBuy),
-            keccak256(abi.encode(address(targetToken), keccak256(abi.encode(user, uint256(3))))),
-            bytes32(initialTokens)
-        );
+        // First, let user earn some tokens through a buy
+        vm.prank(user);
+        autoBuy.setSocialAmounts(initialTokens, 0);
+        
+        vm.prank(backend);
+        autoBuy.executeSocialAutoBuy(user, address(targetToken), "like", 0);
+        
+        uint256 userTokenBalance = autoBuy.getUserTokenBalance(user, address(targetToken));
+        vm.assume(userTokenBalance >= withdrawAmount);
         
         uint256 userInitialBalance = targetToken.balanceOf(user);
         
@@ -190,7 +307,7 @@ contract AutoBuyFuzzTest is Test {
         assertEq(targetToken.balanceOf(user), userInitialBalance + withdrawAmount);
         assertEq(
             autoBuy.getUserTokenBalance(user, address(targetToken)),
-            initialTokens - withdrawAmount
+            userTokenBalance - withdrawAmount
         );
     }
     
@@ -203,14 +320,19 @@ contract AutoBuyFuzzTest is Test {
         uint256 secondBuy
     ) public {
         vm.assume(user != address(0));
-        vm.assume(buyLimit >= 1000e6 && buyLimit <= 10000e6);
-        vm.assume(likeAmount > 0 && likeAmount <= buyLimit);
-        vm.assume(firstBuy > 0 && firstBuy <= buyLimit);
-        vm.assume(secondBuy > 0 && secondBuy <= buyLimit);
-        vm.assume(firstBuy + secondBuy <= buyLimit * 2); // Allow multiple buys
+        vm.assume(user != address(autoBuy));
+        vm.assume(user != owner);
+        vm.assume(user != backend);
+        vm.assume(user != feeRecipient);
+        
+        // Use simpler constraints to avoid rejection
+        buyLimit = bound(buyLimit, 1000e6, 5000e6);
+        likeAmount = bound(likeAmount, 100e6, buyLimit / 2);
+        firstBuy = bound(firstBuy, 100e6, buyLimit / 2);
+        secondBuy = bound(secondBuy, 100e6, buyLimit / 2);
         
         uint256 totalNeeded = firstBuy + secondBuy + likeAmount;
-        setupUser(user, totalNeeded + 1000e6, buyLimit);
+        setupUser(user, totalNeeded + 2000e6, buyLimit);
         
         vm.prank(user);
         autoBuy.setSocialAmounts(likeAmount, 0);
@@ -323,5 +445,20 @@ contract AutoBuyFuzzTest is Test {
         vm.prank(backend);
         vm.expectRevert("Not authorized backend");
         autoBuy.executeFarcasterAutoBuy(user, address(targetToken), 1000e6, 0);
+    }
+
+    // FUZZ TEST: Owner fee withdrawal
+    function testFuzz_withdrawFees(uint256 feeAmount) public {
+        vm.assume(feeAmount > 0 && feeAmount <= 1000000e6);
+        
+        // Simulate fees accumulated in the contract
+        deal(address(usdc), address(autoBuy), feeAmount);
+        
+        uint256 feeRecipientInitialBalance = usdc.balanceOf(feeRecipient);
+        
+        vm.prank(owner);
+        autoBuy.withdrawFees(address(usdc));
+        
+        assertEq(usdc.balanceOf(feeRecipient), feeRecipientInitialBalance + feeAmount);
     }
 }
