@@ -1,0 +1,20 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "@uniswap/v2-periphery/=lib/v2-periphery/",
+    "@uniswap/v3-periphery/=lib/v3-periphery/",
+    "@uniswap/v4-core/=lib/v4-core/",
+    "@uniswap/v4-periphery/=lib/v4-periphery/",
+    "@uniswap/universal-router/=lib/universal-router/",
+    "@uniswap/permit2/=lib/permit2/",
+    "@uniswap/v2-core/=lib/v2-core/",
+    "@uniswap/v3-core/=lib/v3-core/",
+]
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
