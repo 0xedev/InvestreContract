@@ -23,12 +23,12 @@ contract AutoBuyContract is ReentrancyGuard {
     using StateLibrary for IPoolManager;
     using CurrencyLibrary for Currency;
     using PoolIdLibrary for PoolKey;
-
-    UniversalRouter public immutable router;
-    IPoolManager public immutable poolManager;
-    IPermit2 public immutable permit2;
+//BASE MAINNET
+    UniversalRouter public immutable router; //0x6ff5693b99212da76ad316178a184ab56d299b43
+    IPoolManager public immutable poolManager;//0x498581ff718922c3f8e6a244956af099b2652b2b
+    IPermit2 public immutable permit2;//0x000000000022D473030F116dDEE9F6B43aC78BA3
     ISwapRouter public immutable v3Router;
-    IUniswapV2Router02 public immutable v2Router;
+    IUniswapV2Router02 public immutable v2Router;//0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24
   
     // Track earned tokens per user (from auto-buys)
     mapping(address => mapping(address => uint256)) public userTokenBalances; // user => token => balance
@@ -307,18 +307,19 @@ contract AutoBuyContract is ReentrancyGuard {
 
     // Smart routing function - tries V4 first, falls back to V3/V2
     function smartAutoBuy(
+        address user,
         address tokenIn,
         address tokenOut,
         uint128 amountIn,
         uint128 minAmountOut
     ) external onlyAuthorized nonReentrant returns (uint256 amountOut) {
-        require(userTokenBalances[msg.sender][tokenIn] >= amountIn, "Insufficient balance");
+        require(userTokenBalances[user][tokenIn] >= amountIn, "Insufficient balance");
         
         // Calculate fee
         uint256 fee = calculateFee(amountIn);
         uint256 swapAmount = amountIn - fee;
         
-        userTokenBalances[msg.sender][tokenIn] -= amountIn;
+        userTokenBalances[user][tokenIn] -= amountIn;
 
         // Transfer fee to recipient
         IERC20(tokenIn).transfer(feeRecipient, fee);
@@ -351,8 +352,8 @@ contract AutoBuyContract is ReentrancyGuard {
         require(amountOut >= minAmountOut, "Insufficient output");
         
         // Add output tokens to user's balance
-        userTokenBalances[msg.sender][tokenOut] += amountOut;
-        emit AutoBuyExecuted(msg.sender, tokenOut, amountIn, amountOut, fee);
+        userTokenBalances[user][tokenOut] += amountOut;
+        emit AutoBuyExecuted(user, tokenOut, amountIn, amountOut, fee);
         
         return amountOut;
     }
