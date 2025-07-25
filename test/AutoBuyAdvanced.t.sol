@@ -34,22 +34,50 @@ contract AdvancedMockUniversalRouter {
     
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256) external payable {
         // Simple mock implementation for V4 swaps
-        // We'll just transfer a fixed amount of whatever token we have most of to the caller
+        // We'll transfer the token we have the most balance of (since tests fund us with specific tokens)
         
         if (commands.length > 0 && inputs.length > 0) {
             address caller = msg.sender;
             uint256 transferAmount = 50e6;
             
-            // Try registered tokens first
+            // Get all registered tokens and find the one with highest balance
             address[] memory registeredTokens = new address[](4);
             registeredTokens[0] = tokens["tokenA"];
             registeredTokens[1] = tokens["tokenB"];
             registeredTokens[2] = tokens["tokenC"];
             registeredTokens[3] = tokens["tokenD"];
             
+            address bestToken = address(0);
+            uint256 bestBalance = 0;
+            
+            // Find the token with the highest balance that can cover the transfer
             for (uint i = 0; i < registeredTokens.length; i++) {
                 address tokenAddr = registeredTokens[i];
                 if (tokenAddr == address(0)) continue;
+                
+                try IERC20(tokenAddr).balanceOf(address(this)) returns (uint256 balance) {
+                    if (balance >= transferAmount && balance > bestBalance) {
+                        bestToken = tokenAddr;
+                        bestBalance = balance;
+                    }
+                } catch {
+                    // Continue to next token  
+                }
+            }
+            
+            // Transfer from the token with the highest balance
+            if (bestToken != address(0)) {
+                try IERC20(bestToken).transfer(caller, transferAmount) returns (bool success) {
+                    if (success) {
+                        return; // Successfully transferred
+                    }
+                } catch {}
+            }
+            
+            // Fallback: try any token with sufficient balance
+            for (uint i = 0; i < registeredTokens.length; i++) {
+                address tokenAddr = registeredTokens[i];
+                if (tokenAddr == address(0) || tokenAddr == bestToken) continue; // Skip already tried token
                 
                 try IERC20(tokenAddr).balanceOf(address(this)) returns (uint256 balance) {
                     if (balance >= transferAmount) {
