@@ -14,6 +14,9 @@ contract AdvancedMockUniversalRouter {
     mapping(address => bool) public shouldFailForToken;
     mapping(address => uint256) public mockOutputAmount;
     
+    // Store references to tokens for easier access
+    mapping(string => address) public tokens;
+    
     receive() external payable {}
     
     function setShouldFailForToken(address token, bool shouldFail) external {
@@ -24,10 +27,45 @@ contract AdvancedMockUniversalRouter {
         mockOutputAmount[token] = amount;
     }
     
-    function execute(bytes calldata, bytes[] calldata, uint256) external payable {
-        // Check if this should fail based on token configuration
-        // This is a simplified mock - in reality we'd decode the commands
-        // For testing purposes, we'll make it fail if configured to do so
+    // Allow the test to register token addresses
+    function setToken(string memory name, address tokenAddr) external {
+        tokens[name] = tokenAddr;
+    }
+    
+    function execute(bytes calldata commands, bytes[] calldata inputs, uint256) external payable {
+        // Simple mock implementation for V4 swaps
+        // We'll just transfer a fixed amount of whatever token we have most of to the caller
+        
+        if (commands.length > 0 && inputs.length > 0) {
+            address caller = msg.sender;
+            uint256 transferAmount = 50e6;
+            
+            // Try registered tokens first
+            address[] memory registeredTokens = new address[](4);
+            registeredTokens[0] = tokens["tokenA"];
+            registeredTokens[1] = tokens["tokenB"];
+            registeredTokens[2] = tokens["tokenC"];
+            registeredTokens[3] = tokens["tokenD"];
+            
+            for (uint i = 0; i < registeredTokens.length; i++) {
+                address tokenAddr = registeredTokens[i];
+                if (tokenAddr == address(0)) continue;
+                
+                try IERC20(tokenAddr).balanceOf(address(this)) returns (uint256 balance) {
+                    if (balance >= transferAmount) {
+                        try IERC20(tokenAddr).transfer(caller, transferAmount) returns (bool success) {
+                            if (success) {
+                                return; // Successfully transferred, exit
+                            }
+                        } catch {
+                            // Continue to next token
+                        }
+                    }
+                } catch {
+                    // Continue to next token  
+                }
+            }
+        }
     }
 }
 
@@ -178,7 +216,18 @@ contract AutoBuyAdvancedTest is Test {
         mockV2Router = new AdvancedMockV2Router();
         permit2 = new MockPermit2();
         
+        // Register token addresses with mock router
+        mockUniversalRouter.setToken("tokenA", address(tokenA));
+        mockUniversalRouter.setToken("tokenB", address(tokenB));
+        mockUniversalRouter.setToken("tokenC", address(tokenC));
+        mockUniversalRouter.setToken("tokenD", address(tokenD));
+        
         // Fund routers with tokens
+        tokenA.mint(address(mockUniversalRouter), 10000e6);
+        tokenB.mint(address(mockUniversalRouter), 10000e6);
+        tokenC.mint(address(mockUniversalRouter), 10000e6);
+        tokenD.mint(address(mockUniversalRouter), 10000e6);
+        
         tokenA.mint(address(mockV3Router), 10000e6);
         tokenB.mint(address(mockV3Router), 10000e6);
         tokenC.mint(address(mockV3Router), 10000e6);
@@ -408,9 +457,8 @@ contract AutoBuyAdvancedTest is Test {
         bytes32 poolId = keccak256(abi.encode(address(tokenA), address(tokenB)));
         mockPoolManager.setPoolExists(poolId, true);
         
-        // Fund routers with output tokens for the swap and set good output amount
-        tokenB.mint(address(mockV3Router), 1000e6);
-        mockV3Router.setMockOutputAmount(address(tokenB), 75e6); // Ensure sufficient output (more than 50e6 minimum)
+        // Fund universal router with output tokens for the V4 swap
+        tokenB.mint(address(mockUniversalRouter), 1000e6);
         
         // Create pool key
         PoolKey memory key = PoolKey({
@@ -638,8 +686,8 @@ contract AutoBuyAdvancedTest is Test {
         bytes32 poolId = keccak256(abi.encode(lowerToken, higherToken));
         mockPoolManager.setPoolExists(poolId, true);
         
-        // Fund with output tokens
-        (bool success, ) = address(lowerToken).call(abi.encodeWithSignature("mint(address,uint256)", address(mockV3Router), 1000e6));
+        // Fund universal router with the lower token (expected output)
+        (bool success, ) = address(lowerToken).call(abi.encodeWithSignature("mint(address,uint256)", address(mockUniversalRouter), 1000e6));
         require(success, "Mint call failed");
         
         PoolKey memory key = PoolKey({

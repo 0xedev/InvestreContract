@@ -275,8 +275,24 @@ contract AutoBuyContract is ReentrancyGuard {
         uint128 amountIn,
         uint128 minAmountOut
     ) external nonReentrant returns (uint256 amountOut) {
-        address inputToken = Currency.unwrap(key.currency0);
-        require(userTokenBalances[msg.sender][inputToken] >= amountIn, "Insufficient balance");
+        // Determine input and output tokens based on the pool key
+        address inputToken;
+        address outputToken;
+        
+        // For this function, we need to determine which currency is the input
+        // Check user's balance for both currencies to determine input token
+        address currency0 = Currency.unwrap(key.currency0);
+        address currency1 = Currency.unwrap(key.currency1);
+        
+        if (userTokenBalances[msg.sender][currency0] >= amountIn) {
+            inputToken = currency0;
+            outputToken = currency1;
+        } else if (userTokenBalances[msg.sender][currency1] >= amountIn) {
+            inputToken = currency1;
+            outputToken = currency0;
+        } else {
+            revert("Insufficient balance");
+        }
         
         // Calculate fee
         uint256 fee = calculateFee(amountIn);
@@ -288,20 +304,22 @@ contract AutoBuyContract is ReentrancyGuard {
         IERC20(inputToken).transfer(feeRecipient, fee);
         emit FeeCollected(inputToken, fee);
 
+        // Get balance before swap
+        uint256 balanceBefore = IERC20(outputToken).balanceOf(address(this));
+
         // Execute the actual swap
-        bool success = executeV4Swap(inputToken, Currency.unwrap(key.currency1), uint128(swapAmount), minAmountOut);
+        bool success = executeV4Swap(inputToken, outputToken, uint128(swapAmount), minAmountOut);
         require(success, "V4 swap failed");
 
         // Calculate actual output
-        uint256 balanceBefore = IERC20(Currency.unwrap(key.currency1)).balanceOf(address(this));
-        uint256 balanceAfter = IERC20(Currency.unwrap(key.currency1)).balanceOf(address(this));
+        uint256 balanceAfter = IERC20(outputToken).balanceOf(address(this));
         amountOut = balanceAfter - balanceBefore;
         require(amountOut >= minAmountOut, "Insufficient output amount");
         
         // Add output tokens to user's balance
-        userTokenBalances[msg.sender][Currency.unwrap(key.currency1)] += amountOut;
+        userTokenBalances[msg.sender][outputToken] += amountOut;
         
-        emit AutoBuyExecuted(msg.sender, Currency.unwrap(key.currency1), amountIn, amountOut, fee);
+        emit AutoBuyExecuted(msg.sender, outputToken, amountIn, amountOut, fee);
         return amountOut;
     }
 
@@ -328,23 +346,22 @@ contract AutoBuyContract is ReentrancyGuard {
         // Get balance before swap
         uint256 balanceBefore = IERC20(tokenOut).balanceOf(address(this));
 
-        // Try multiple routing strategies
-        bytes memory commands;
-        bytes[] memory inputs;
+        // Smart routing: try V4 -> V3 -> V2
+        bool success = false;
         
         if (tryV4Route(tokenIn, tokenOut)) {
-            (commands, inputs) = buildV4Route(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
-        } else if (tryV3Route(tokenIn, tokenOut)) {
-            (commands, inputs) = buildV3Route(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
-        } else {
-            (commands, inputs) = buildV2Route(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
+            success = executeV4Swap(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
         }
-
-        // Approve router to spend tokens
-        IERC20(tokenIn).approve(address(router), swapAmount);
         
-        // Execute swap
-        router.execute(commands, inputs, block.timestamp + 300);
+        if (!success && tryV3Route(tokenIn, tokenOut)) {
+            success = executeV3Swap(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
+        }
+        
+        if (!success) {
+            success = executeV2Swap(tokenIn, tokenOut, uint128(swapAmount), minAmountOut);
+        }
+        
+        require(success, "All swap attempts failed");
 
         // Calculate actual output
         uint256 balanceAfter = IERC20(tokenOut).balanceOf(address(this));
