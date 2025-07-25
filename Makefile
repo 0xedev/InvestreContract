@@ -29,7 +29,9 @@ deploy-base: ## Deploy to Base mainnet with verification
 	@echo "⚠️  Make sure you have sufficient Base ETH for gas!"
 	@read -p "Continue? (y/N): " confirm && [ "$$confirm" = "y" ] || exit 1
 	@forge script script/DeployBase.s.sol:DeployBase --rpc-url base --broadcast --verify --slow
+#--slow
 
+#
 deploy-base-no-verify: ## Deploy to Base mainnet without verification
 	@echo "🚀 Deploying to Base mainnet (no verification)..."
 	@echo "⚠️  Make sure you have sufficient Base ETH for gas!"
@@ -44,11 +46,11 @@ verify-base: ## Verify contract on Basescan (requires CONTRACT_ADDRESS)
 	@echo "🔍 Verifying contract $(CONTRACT_ADDRESS) on Basescan..."
 	@forge verify-contract $(CONTRACT_ADDRESS) src/AllUniswap.sol:AutoBuyContract \
 		--constructor-args $$(cast abi-encode "constructor(address,address,address,address,address,address)" \
-		0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD \
-		0x38EB8B22Df3Ae7fb21e92881151B365Df14ba967 \
+		0x6fF5693b99212Da76ad316178A184AB56D299b43 \
+		0x498581fF718922c3f8e6A244956aF099B2652b2b \
 		0x000000000022D473030F116dDEE9F6B43aC78BA3 \
 		0x2626664c2603336E57B271c5C0b26F421741e481 \
-		0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24 \
+		0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24 \
 		0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) \
 		--chain base
 
@@ -102,9 +104,9 @@ check-balance: ## Check deployer ETH balance
 
 addresses: ## Show all contract addresses used in deployment
 	@echo "📋 Base Mainnet Contract Addresses:"
-	@echo "Universal Router:  0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"
-	@echo "Pool Manager (V4): 0x38EB8B22Df3Ae7fb21e92881151B365Df14ba967"
+	@echo "Universal Router:  0x6fF5693b99212Da76ad316178A184AB56D299b43"
+	@echo "Pool Manager (V4): 0x498581fF718922c3f8e6A244956aF099B2652b2b"
 	@echo "Permit2:          0x000000000022D473030F116dDEE9F6B43aC78BA3"
 	@echo "V3 SwapRouter:    0x2626664c2603336E57B271c5C0b26F421741e481"
-	@echo "V2 Router:        0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24"
+	@echo "V2 Router:        0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24"
 	@echo "USDC:             0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
